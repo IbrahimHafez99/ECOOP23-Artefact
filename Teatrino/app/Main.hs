@@ -5,6 +5,9 @@ import BaseUtils ( intercalate', spacer, ErrOr(..) )
 import Core ( G )
 import Projection ( projAllRoles )
 import Parser ( parseFile )
+import ProcGen ( genProcsFromLocals )
+import Process ( ppProc )
+import TypeCheck ( checkProcsFromLocals )
 import Effpi ( effpiGIO, Verbosity(Quiet, Loud) )
 import PPrinter ( ppG, ppRSList )
 
@@ -36,7 +39,8 @@ data MyOptions = MyOptions {
     file    :: FilePath,
     outdir  :: FilePath,
     effpi   :: Bool,
-    project :: Bool
+    project :: Bool,
+    gen     :: Bool
   } deriving (Data, Typeable, Show, Eq)
 
 myProgOpts :: MyOptions
@@ -44,7 +48,10 @@ myProgOpts = MyOptions {
     file = def &= typFile &= help "Parse a single nuScr file",
     outdir = "scala/" &= typDir &= help "Output directory for generated code",
     effpi = def &= help "Generate Effpi skeleton code",
-    project = def &= help "Prints all local types; superseded by --effpi"
+    project = def &= help "Prints all local types; superseded by --effpi",
+    gen = def
+      &= help "Generate session calculus processes from the projected local \
+              \types, print them, then type-check them"
   }
 
 getOpts :: IO MyOptions
@@ -93,6 +100,25 @@ execFile _opts@MyOptions{..} = do
     execFile' loud (Ok g)
       -- Generate Scala code
       | effpi = effpiGIO (if loud then Loud else Quiet) (takeBaseName file) g
+      -- Generate session calculus processes from the projected local types,
+      -- print them, and then type-check them. Because each process is built.
+      | gen = do
+        -- Project the global type onto every role ONCE, then share the
+        -- result: generate the processes from it, and check them against
+        -- it.
+        let lts       = projAllRoles g
+            generated = genProcsFromLocals lts
+        putStrLn ("Generated processes from the projections of "
+                  ++ file ++ ":\n")
+        mapM_ (\(r, p) ->
+                 putStrLn ("proc " ++ r ++ " {\n" ++ ppProc p ++ "\n}\n"))
+              generated
+        case checkProcsFromLocals lts generated of
+          Err err -> putStrLn ("Type error:\n" ++ err)
+                     >> exitWith (ExitFailure 1)
+          Ok msgs -> do
+            putStrLn "Type-checking the generated processes:"
+            mapM_ (putStrLn . ("  " ++)) msgs
       -- Print to command line global type and possibly local types
       | otherwise = do
         ppG g

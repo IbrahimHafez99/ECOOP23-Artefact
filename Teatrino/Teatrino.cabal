@@ -1,17 +1,17 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.34.4.
+-- This file has been generated from package.yaml by hpack version 0.38.1.
 --
 -- see: https://github.com/sol/hpack
 
 name:           Teatrino
 version:        0.1.0.0
 description:    Please see the README on GitHub at <https://github.com/githubuser/Teatrino#readme>
-homepage:       https://github.com/githubuser/Teatrino#readme
-bug-reports:    https://github.com/githubuser/Teatrino/issues
-author:         Author name here
-maintainer:     example@example.com
-copyright:      2022 Author name here
+homepage:       https://github.com/adbarwell/Teatrino#readme
+bug-reports:    https://github.com/adbarwell/Teatrino/issues
+author:         Adam D. Barwell
+maintainer:     adb23@st-andrews.ac.uk
+copyright:      2023 Adam D. Barwell
 license:        BSD3
 license-file:   LICENSE
 build-type:     Simple
@@ -20,7 +20,7 @@ extra-source-files:
 
 source-repository head
   type: git
-  location: https://github.com/githubuser/Teatrino
+  location: https://github.com/adbarwell/Teatrino
 
 library
   exposed-modules:
@@ -33,8 +33,11 @@ library
       Parser
       ParserUtils
       PPrinter
+      Process
+      ProcGen
       Projection
       Scala
+      TypeCheck
       Utils
   other-modules:
       Paths_Teatrino
@@ -42,12 +45,12 @@ library
       src
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wno-unused-local-binds
   build-depends:
-      Unique
-    , base >=4.7 && <5
+      base >=4.7 && <5
     , cmdargs
     , deepseq
     , directory
     , filepath
+    , list-predicate
     , parsec
     , pretty-simple
     , text
@@ -60,12 +63,12 @@ executable Teatrino
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wno-unused-local-binds -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       Teatrino
-    , Unique
     , base >=4.7 && <5
     , cmdargs
     , deepseq
     , directory
     , filepath
+    , list-predicate
     , parsec
     , pretty-simple
     , text
@@ -81,7 +84,6 @@ benchmark Teatrino-bench
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -Wno-unused-local-binds -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       Teatrino
-    , Unique
     , base >=4.7 && <5
     , bytestring
     , cassava
@@ -90,6 +92,7 @@ benchmark Teatrino-bench
     , deepseq
     , directory
     , filepath
+    , list-predicate
     , parsec
     , pretty-simple
     , text
