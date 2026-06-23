@@ -7,6 +7,7 @@ import Projection ( projAllRoles )
 import Parser ( parseFile )
 import ProcGen ( genProcsFromLocals )
 import Process ( ppProc )
+import Session ( genSession, ppSession, checkSession )
 import TypeCheck ( checkProcsFromLocals )
 import Effpi ( effpiGIO, Verbosity(Quiet, Loud) )
 import PPrinter ( ppG, ppRSList )
@@ -40,7 +41,8 @@ data MyOptions = MyOptions {
     outdir  :: FilePath,
     effpi   :: Bool,
     project :: Bool,
-    gen     :: Bool
+    gen     :: Bool,
+    session :: Bool
   } deriving (Data, Typeable, Show, Eq)
 
 myProgOpts :: MyOptions
@@ -51,7 +53,10 @@ myProgOpts = MyOptions {
     project = def &= help "Prints all local types; superseded by --effpi",
     gen = def
       &= help "Generate session calculus processes from the projected local \
-              \types, print them, then type-check them"
+              \types, print them, then type-check them",
+    session = def
+      &= help "Build the session (participants in parallel) from the protocol, \
+              \print it, then type-check every participant"
   }
 
 getOpts :: IO MyOptions
@@ -118,6 +123,19 @@ execFile _opts@MyOptions{..} = do
                      >> exitWith (ExitFailure 1)
           Ok msgs -> do
             putStrLn "Type-checking the generated processes:"
+            mapM_ (putStrLn . ("  " ++)) msgs
+      -- Build the session (participants in parallel) from the protocol,
+      -- print it, then type-check every participant.
+      | session = do
+        let sess = genSession g
+        putStrLn ("Session for " ++ file ++ ":\n")
+        putStrLn (ppSession sess)
+        putStrLn ""
+        case checkSession g sess of
+          Err err -> putStrLn ("Type error:\n" ++ err)
+                     >> exitWith (ExitFailure 1)
+          Ok msgs -> do
+            putStrLn "Type-checking the session participants:"
             mapM_ (putStrLn . ("  " ++)) msgs
       -- Print to command line global type and possibly local types
       | otherwise = do

@@ -1,10 +1,11 @@
 -- Type checking processes against the protocol.
-module TypeCheck (checkProcsFromLocals, checkProc, typeOfExpr) where
+module TypeCheck (checkProcs, checkProcsFromLocals, checkProc, typeOfExpr) where
 
 import BaseUtils (ErrOr (..), intercalate', toInt)
-import Core (B (..), Choice (..), Role, S (..))
+import Core (B (..), Choice (..), G, Role, S (..))
 import Data.List (find)
 import Process (Branch (..), Expr (..), P (..))
+import Projection (projAllRoles)
 
 -- Variables that are in scope (bound by receives), ex notebook: [("quote", Double), ("addr", String)]..
 -- we need it Because later, when the process sends a variable, we have to know its type , and the only way to know is to remember it from when it was received. The Env is that memory.
@@ -147,31 +148,50 @@ go _ _ _ p t =
         ++ "the protocol loops)"
     )
 
--- Check a whole system against local types we are GIVEN.
---
--- We take the already-projected local types as input instead of
--- projecting here, so a caller that has already projected the global
--- type (for example, to generate processes from it) can pass the same
--- local types straight in and avoid projecting twice. Each process is
--- checked against its role's local type; roles we got no process for are
--- just reported as skipped, which is handy while still writing them.
 checkProcsFromLocals :: [(Role, S ())] -> [(String, P)] -> ErrOr [String]
-checkProcsFromLocals lts ps = fmap (++ skipped) (mapM f ps)
+-- Define the function using two inputs: local types lts and processes ps.
+checkProcsFromLocals lts ps =
+  -- Check every process with f, if successful, add skipped-role messages.
+  fmap (++ skipped) (mapM f ps)
   where
-    f (rname, p) = case find (\(r, _) -> show r == rname) lts of
-      Nothing ->
-        Err
-          ( "role "
-              ++ rname
-              ++ " is not part of this protocol; "
-              ++ "the participants are "
-              ++ intercalate' ", " (map (show . fst) lts)
-          )
-      Just (_, t) -> case checkProc t p of
-        Ok () -> Ok (rname ++ ": well-typed")
-        Err e -> Err ("role " ++ rname ++ ":\n" ++ e)
+    -- f checks one process pair: role name rname and process p which is (String, P).
+    f (rname, p) =
+      -- Search lts for the local type belonging to this role name.
+      case find (\(r, _) -> show r == rname) lts of
+        -- If no matching role is found, return an error.
+        Nothing ->
+          Err
+            -- Start the error message.
+            ( "role "
+                -- Add the role name that was not found.
+                ++ rname
+                -- Explain the problem.
+                ++ " is not part of this protocol; "
+                -- Start listing valid participants.
+                ++ "the participants are "
+                -- Join all protocol role names with commas.
+                ++ intercalate' ", " (map (show . fst) lts)
+            )
+        -- If a matching role is found, ignore the role and keep its local type t.
+        Just (_, t) ->
+          -- Check process p against local type t.
+          case checkProc t p of
+            -- If the process type-checks, return a success message.
+            Ok () -> Ok (rname ++ ": well-typed")
+            -- If checking fails, attach the role name to the error.
+            Err e -> Err ("role " ++ rname ++ ":\n" ++ e)
+
+    -- Build messages for protocol roles that have no process.
     skipped =
+      -- This is a list comprehension: it creates a list of strings.
       [ show r ++ ": no process given (skipped)"
-        | (r, _) <- lts,
+        | -- Go through every role/local-type pair in lts.
+          (r, _) <- lts,
+          -- Keep only roles whose name is not in the process-name list.
           show r `notElem` map fst ps
       ]
+
+-- Project the global type onto every role, then check. Used by the
+-- hand-written process path and by the test suite.
+checkProcs :: G () -> [(String, P)] -> ErrOr [String]
+checkProcs g = checkProcsFromLocals (projAllRoles g)
