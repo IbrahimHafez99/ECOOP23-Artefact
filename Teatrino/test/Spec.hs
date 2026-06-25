@@ -1,9 +1,4 @@
--- Test suite for the type checker.
---
--- Each test parses a protocol and some processes, runs the checker, and
--- checks the result is what we expect: correct processes are accepted,
--- a deliberately broken one is rejected with the right error, and the
--- processes the generator produces all type-check. Run with: stack test
+
 module Main (main) where
 
 import BaseUtils (ErrOr (..))
