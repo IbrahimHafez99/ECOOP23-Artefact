@@ -79,6 +79,10 @@ test-suite Teatrino-test
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
+      AcceptanceTests
+      Examples
+      RejectionTests
+      TestUtils
       Paths_Teatrino
   hs-source-dirs:
       test
