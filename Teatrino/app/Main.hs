@@ -9,6 +9,9 @@ import ProcGen ( genProcsFromLocals )
 import Process ( ppProc )
 import Session ( genSession, ppSession, checkSession )
 import TypeCheck ( checkProcsFromLocals )
+import Refactor
+    ( Artifacts(..), generateArtifacts
+    , refactorRenameRole, refactorRenameLabel )
 import Effpi ( effpiGIO, Verbosity(Quiet, Loud) )
 import PPrinter ( ppG, ppRSList )
 
@@ -37,12 +40,14 @@ import Control.Monad (when, unless)
 import GHC.IO.Encoding ( utf8, setLocaleEncoding )
 
 data MyOptions = MyOptions {
-    file    :: FilePath,
-    outdir  :: FilePath,
-    effpi   :: Bool,
-    project :: Bool,
-    gen     :: Bool,
-    session :: Bool
+    file          :: FilePath,
+    outdir        :: FilePath,
+    effpi         :: Bool,
+    project       :: Bool,
+    gen           :: Bool,
+    session       :: Bool,
+    refactorRole  :: String,
+    refactorLabel :: String
   } deriving (Data, Typeable, Show, Eq)
 
 myProgOpts :: MyOptions
@@ -56,7 +61,13 @@ myProgOpts = MyOptions {
               \types, print them, then type-check them",
     session = def
       &= help "Build the session (participants in parallel) from the protocol, \
-              \print it, then type-check every participant"
+              \print it, then type-check every participant",
+    refactorRole = def
+      &= help "Rename a role across the protocol, local types and generated \
+              \processes, then re-check. Format: --refactorrole=Old:New",
+    refactorLabel = def
+      &= help "Rename a label across the protocol, local types and generated \
+              \processes, then re-check. Format: --refactorlabel=Old:New"
   }
 
 getOpts :: IO MyOptions
@@ -137,6 +148,18 @@ execFile _opts@MyOptions{..} = do
           Ok msgs -> do
             putStrLn "Type-checking the session participants:"
             mapM_ (putStrLn . ("  " ++)) msgs
+      -- Rename a role in place across the generated artifacts, then re-check.
+      | not (null refactorRole) =
+        case splitPair refactorRole of
+          Nothing -> badPair "refactorrole"
+          Just (old, new) ->
+            runRefactor (refactorRenameRole old new) (generateArtifacts g)
+      -- Rename a label in place across the generated artifacts, then re-check.
+      | not (null refactorLabel) =
+        case splitPair refactorLabel of
+          Nothing -> badPair "refactorlabel"
+          Just (old, new) ->
+            runRefactor (refactorRenameLabel old new) (generateArtifacts g)
       -- Print to command line global type and possibly local types
       | otherwise = do
         ppG g
@@ -145,4 +168,48 @@ execFile _opts@MyOptions{..} = do
         when (project && not loud) $
           ppRSList (projAllRoles g)
         putStrLn ""
+
+    -- Split an "Old:New" argument into its two halves.
+    splitPair :: String -> Maybe (String, String)
+    splitPair s = case break (== ':') s of
+      (a, ':' : b) | not (null a) && not (null b) -> Just (a, b)
+      _ -> Nothing
+
+    badPair :: String -> IO ()
+    badPair flagName =
+      putStrLn ("Use --" ++ flagName ++ "=Old:New")
+        >> exitWith (ExitFailure 1)
+
+    -- Print the three artifacts (global type, local types, processes).
+    printArtifacts :: Artifacts -> IO ()
+    printArtifacts arts = do
+      putStrLn "global type:"
+      ppG (aGlobal arts)
+      putStrLn "\nlocal types:"
+      ppRSList (aLocals arts)
+      putStrLn "processes:"
+      mapM_ (\(r, p) ->
+               putStrLn ("proc " ++ r ++ " {\n" ++ ppProc p ++ "\n}\n"))
+            (aProcs arts)
+
+    -- Show the generated artifacts, apply the refactoring IN PLACE (the
+    -- refactoring edits each artifact directly, it does not project again),
+    -- then show the result. The refactoring already re-checked the edited
+    -- local types against the edited processes, so reaching Ok means it passed.
+    runRefactor :: (Artifacts -> ErrOr Artifacts) -> Artifacts -> IO ()
+    runRefactor refac arts = do
+      putStrLn "Generated artifacts (before refactoring):\n"
+      printArtifacts arts
+      case refac arts of
+        Err e -> putStrLn ("Refactoring rejected:\n  " ++ e)
+                 >> exitWith (ExitFailure 1)
+        Ok arts' -> do
+          putStrLn "Refactored artifacts (renamed in place, no re-projection):\n"
+          printArtifacts arts'
+          case checkProcsFromLocals (aLocals arts') (aProcs arts') of
+            Err err -> putStrLn ("Type error after refactoring:\n" ++ err)
+                       >> exitWith (ExitFailure 1)
+            Ok msgs -> do
+              putStrLn "Re-checking the edited local types against the edited processes:"
+              mapM_ (putStrLn . ("  " ++)) msgs
 

@@ -1,12 +1,12 @@
--- Shared test helpers: the result type, the expect-* combinators, and
--- the line printer. The actual test cases live in AcceptanceTests and
--- RejectionTests; the example processes live in Examples.
+
 module TestUtils
   ( Result,
     expectGenWellTyped,
     expectSessionWellTyped,
     expectManualWellTyped,
     expectManualError,
+    expectRefactorOk,
+    expectRefactorRejected,
     report,
   )
 where
@@ -16,6 +16,7 @@ import Data.List (isInfixOf)
 import Parser (parseFile)
 import ProcGen (genAllProcs)
 import Process (P)
+import Refactor (Artifacts, withProcs)
 import Session (checkSession, genSession)
 import TypeCheck (checkProcs)
 
@@ -60,6 +61,24 @@ expectManualWellTyped name protoFile ps = do
 expectManualError :: String -> FilePath -> [(String, P)] -> String -> IO Result
 expectManualError name protoFile ps needle = do
   r <- checkManual protoFile ps
+  pure (name, case r of Err e -> needle `isInfixOf` e; Ok _ -> False)
+
+
+-- A refactoring that should succeed (the edited artifacts still type-check).
+expectRefactorOk ::
+  String -> FilePath -> [(String, P)] -> (Artifacts -> ErrOr b) -> IO Result
+expectRefactorOk name protoFile procs refac = do
+  g <- parseFile protoFile
+  let r = g >>= \gg -> refac (withProcs gg procs)
+  pure (name, case r of Ok _ -> True; Err _ -> False)
+
+-- A refactoring (or an inconsistent in-place edit) that should be rejected,
+-- with an error mentioning the given text.
+expectRefactorRejected ::
+  String -> FilePath -> [(String, P)] -> (Artifacts -> ErrOr b) -> String -> IO Result
+expectRefactorRejected name protoFile procs refac needle = do
+  g <- parseFile protoFile
+  let r = g >>= \gg -> refac (withProcs gg procs)
   pure (name, case r of Err e -> needle `isInfixOf` e; Ok _ -> False)
 
 -- Print one result line.

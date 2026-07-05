@@ -1,16 +1,14 @@
--- Test runner. Collects the acceptance and rejection groups, runs them
--- all, prints PASS/FAIL per test, and exits success only if every test
--- passed. The tests themselves live in AcceptanceTests and RejectionTests.
 module Main (main) where
 
 import AcceptanceTests (acceptanceTests)
+import RefactorTests (refactorTests)
 import RejectionTests (rejectionTests)
 import System.Exit (exitFailure, exitSuccess)
 import TestUtils (report)
 
 main :: IO ()
 main = do
-  results <- sequence (acceptanceTests ++ rejectionTests)
+  results <- sequence (acceptanceTests ++ rejectionTests ++ refactorTests)
   mapM_ report results
   putStrLn ""
   let total = length results

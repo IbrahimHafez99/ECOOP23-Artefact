@@ -36,6 +36,7 @@ library
       Process
       ProcGen
       Projection
+      Refactor
       Scala
       Session
       TypeCheck
@@ -81,6 +82,7 @@ test-suite Teatrino-test
   other-modules:
       AcceptanceTests
       Examples
+      RefactorTests
       RejectionTests
       TestUtils
       Paths_Teatrino
