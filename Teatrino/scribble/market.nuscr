@@ -1,0 +1,7 @@
+(*# ErrorHandlingCrashBranch #*)
+
+global protocol Market(reliable role B, reliable role S, reliable role W) {
+  ask(String) from B to S;
+  price(Int) from S to B;
+  price(Int) from S to W;
+}

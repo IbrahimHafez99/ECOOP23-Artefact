@@ -4,7 +4,9 @@ module RefactorTests (refactorTests) where
 import Examples (twoBuyerManual)
 import Refactor
   ( Artifacts (..),
+    LabelSite (..),
     refactorRenameLabel,
+    refactorRenameLabelAtSite,
     refactorRenameRole,
     renameRoleInSystem,
   )
@@ -52,5 +54,25 @@ refactorTests =
       proto
       twoBuyerManual
       (refactorRenameRole "P" "Q")
-      "already a role"
+      "already a role",
+    -- split: rename Quote only on the R -> P message; the R -> Q Quote stays
+    expectRefactorOk
+      "refactor: rename label at site R->P Quote -> Price (accepted)"
+      proto
+      twoBuyerManual
+      (refactorRenameLabelAtSite (LabelSite "R" "P" "Quote") "Price"),
+    -- site precondition: new clashes with a sibling of that choice (Q->R {Ok,Quit})
+    expectRefactorRejected
+      "refactor: rename label at site onto a sibling (rejected)"
+      proto
+      twoBuyerManual
+      (refactorRenameLabelAtSite (LabelSite "Q" "R" "Ok") "Quit")
+      "sibling",
+    -- site precondition: the message does not exist
+    expectRefactorRejected
+      "refactor: rename label at a site that does not exist (rejected)"
+      proto
+      twoBuyerManual
+      (refactorRenameLabelAtSite (LabelSite "R" "P" "Banana") "Price")
+      "no message"
   ]

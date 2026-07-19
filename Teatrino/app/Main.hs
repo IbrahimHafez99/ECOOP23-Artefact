@@ -11,7 +11,8 @@ import Session ( genSession, ppSession, checkSession )
 import TypeCheck ( checkProcsFromLocals )
 import Refactor
     ( Artifacts(..), generateArtifacts
-    , refactorRenameRole, refactorRenameLabel )
+    , refactorRenameRole, refactorRenameLabel
+    , LabelSite(..), refactorRenameLabelAtSite )
 import Effpi ( effpiGIO, Verbosity(Quiet, Loud) )
 import PPrinter ( ppG, ppRSList )
 
@@ -47,7 +48,8 @@ data MyOptions = MyOptions {
     gen           :: Bool,
     session       :: Bool,
     refactorRole  :: String,
-    refactorLabel :: String
+    refactorLabel :: String,
+    relabelSite   :: String
   } deriving (Data, Typeable, Show, Eq)
 
 myProgOpts :: MyOptions
@@ -67,7 +69,12 @@ myProgOpts = MyOptions {
               \processes, then re-check. Format: --refactorrole=Old:New",
     refactorLabel = def
       &= help "Rename a label across the protocol, local types and generated \
-              \processes, then re-check. Format: --refactorlabel=Old:New"
+              \processes, then re-check. Format: --refactorlabel=Old:New",
+    relabelSite = def
+      &= help "Rename a label at ONE message only (split): rename the message \
+              \Old between the two given roles to New, leaving other messages \
+              \with that label unchanged. Format: \
+              \--relabelsite=Sender:Receiver:Old:New"
   }
 
 getOpts :: IO MyOptions
@@ -160,6 +167,16 @@ execFile _opts@MyOptions{..} = do
           Nothing -> badPair "refactorlabel"
           Just (old, new) ->
             runRefactor (refactorRenameLabel old new) (generateArtifacts g)
+      -- Rename a label at one message only (split), then re-check.
+      | not (null relabelSite) =
+        case splitSite relabelSite of
+          Nothing ->
+            putStrLn "Use --relabelsite=Sender:Receiver:Old:New"
+              >> exitWith (ExitFailure 1)
+          Just (sndr, rcvr, old, new) ->
+            runRefactor
+              (refactorRenameLabelAtSite (LabelSite sndr rcvr old) new)
+              (generateArtifacts g)
       -- Print to command line global type and possibly local types
       | otherwise = do
         ppG g
@@ -173,6 +190,18 @@ execFile _opts@MyOptions{..} = do
     splitPair :: String -> Maybe (String, String)
     splitPair s = case break (== ':') s of
       (a, ':' : b) | not (null a) && not (null b) -> Just (a, b)
+      _ -> Nothing
+
+    -- Split on every ':' into pieces.
+    wordsOn :: Char -> String -> [String]
+    wordsOn ch s = case break (== ch) s of
+      (a, _ : rest) -> a : wordsOn ch rest
+      (a, "") -> [a]
+
+    -- Split a "Sender:Receiver:Old:New" argument into its four parts.
+    splitSite :: String -> Maybe (String, String, String, String)
+    splitSite s = case wordsOn ':' s of
+      [a, b, c, d] | all (not . null) [a, b, c, d] -> Just (a, b, c, d)
       _ -> Nothing
 
     badPair :: String -> IO ()

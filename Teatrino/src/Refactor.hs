@@ -28,12 +28,21 @@ module Refactor
     -- refactor + verify (in place, no re-projection)
     refactorRenameRole,
     refactorRenameLabel,
+    -- rename a label at one site (split): identify a message by
+    -- (sender, receiver, label) and rename only that message.
+    LabelSite (..),
+    freshLabelId,
+    renameLabelAtSiteInG,
+    renameLabelAtSiteEverywhere,
+    preRenameLabelAtSite,
+    refactorRenameLabelAtSite,
   )
 where
 
 import BaseUtils (ErrOr (..))
 import Core (Choice (..), G (..), Label (..), Role (..), S (..))
 import Data.List (nub)
+import Numeric.Natural (Natural)
 import ProcGen (genProcsFromLocals)
 import Process (Branch (..), P (..))
 import Projection (projAllRoles)
@@ -251,5 +260,179 @@ refactorRenameLabel :: String -> String -> Artifacts -> ErrOr Artifacts
 refactorRenameLabel old new arts = do
   preRenameLabel old new (aGlobal arts)
   let arts' = renameLabelEverywhere old new arts
+  _ <- checkProcsFromLocals (aLocals arts') (aProcs arts')
+  pure arts'
+
+-- Rename a label at one site (split)
+data LabelSite = LabelSite
+  { siteSender :: String,
+    siteReceiver :: String,
+    siteLabel :: String
+  }
+
+-- Every label id used in a protocol
+labelIdsInG :: G a -> [Natural]
+labelIdsInG = go
+  where
+    go (GComm _ _ _ cs) = concatMap (\c -> idOf (label c) ++ go (cont c)) cs
+    go (GRec _ g) = go g
+    go (GVar _ _) = []
+    go GEnd = []
+    idOf (MkLabel i _) = [i]
+    idOf CrashLab = []
+
+-- A fresh id not used by any label in the protocol.
+freshLabelId :: G a -> Natural
+freshLabelId g = case labelIdsInG g of
+  [] -> 0
+  is -> maximum is + 1
+
+-- Rename a label value to (fresh, new) only when its name matches old.
+relabelIf :: String -> String -> Natural -> Label -> Label
+relabelIf old new fresh (MkLabel _ nm)
+  | nm == old = MkLabel fresh new
+relabelIf _ _ _ l = l
+
+-- In the global type: at interactions sender -> receiver, rename the branch
+-- labelled old to new (with a fresh id). Other interactions are traversed to
+-- find further matching sites, but their labels are left alone.
+renameLabelAtSiteInG ::
+  String -> String -> String -> String -> Natural -> G a -> G a
+renameLabelAtSiteInG sndr rcvr old new fresh = go
+  where
+    go (GComm p q a cs)
+      | show p == sndr && show q == rcvr = GComm p q a (map fixC cs)
+      | otherwise = GComm p q a (map recC cs)
+    go (GRec a g) = GRec a (go g)
+    go (GVar n a) = GVar n a
+    go GEnd = GEnd
+    fixC c = c {label = relabelIf old new fresh (label c), cont = go (cont c)}
+    recC c = c {cont = go (cont c)}
+
+-- In the sender's local type
+relabelSendsToS :: String -> String -> String -> Natural -> S a -> S a
+relabelSendsToS rcvr old new fresh = go
+  where
+    go (SSend r a cs)
+      | show r == rcvr = SSend r a (map fixC cs)
+      | otherwise = SSend r a (map recC cs)
+    go (SRecv r a cs) = SRecv r a (map recC cs)
+    go (SRec a t) = SRec a (go t)
+    go (SVar n a) = SVar n a
+    go SEnd = SEnd
+    fixC c = c {label = relabelIf old new fresh (label c), cont = go (cont c)}
+    recC c = c {cont = go (cont c)}
+
+-- In the receiver's local type
+relabelRecvsFromS :: String -> String -> String -> Natural -> S a -> S a
+relabelRecvsFromS sndr old new fresh = go
+  where
+    go (SRecv r a cs)
+      | show r == sndr = SRecv r a (map fixC cs)
+      | otherwise = SRecv r a (map recC cs)
+    go (SSend r a cs) = SSend r a (map recC cs)
+    go (SRec a t) = SRec a (go t)
+    go (SVar n a) = SVar n a
+    go SEnd = SEnd
+    fixC c = c {label = relabelIf old new fresh (label c), cont = go (cont c)}
+    recC c = c {cont = go (cont c)}
+
+-- In the sender's process.
+relabelSendsToP :: String -> String -> String -> P -> P
+relabelSendsToP rcvr old new = go
+  where
+    go (Send q l e k)
+      | q == rcvr && l == old = Send q new e (go k)
+      | otherwise = Send q l e (go k)
+    go (Recv q bs) = Recv q (map recB bs)
+    go (If e p1 p2) = If e (go p1) (go p2)
+    go (Rec x p) = Rec x (go p)
+    go (Var x) = Var x
+    go End = End
+    recB (Branch l x k) = Branch l x (go k)
+
+-- In the receiver's process
+relabelRecvsFromP :: String -> String -> String -> P -> P
+relabelRecvsFromP sndr old new = go
+  where
+    go (Send q l e k) = Send q l e (go k)
+    go (Recv q bs)
+      | q == sndr = Recv q (map fixB bs)
+      | otherwise = Recv q (map recB bs)
+    go (If e p1 p2) = If e (go p1) (go p2)
+    go (Rec x p) = Rec x (go p)
+    go (Var x) = Var x
+    go End = End
+    fixB (Branch l x k) = Branch (if l == old then new else l) x (go k)
+    recB (Branch l x k) = Branch l x (go k)
+
+-- Rename the message at one site across the whole snapshot, in place.
+-- Only the sender and receiver of that message are affected.
+renameLabelAtSiteEverywhere :: LabelSite -> String -> Artifacts -> Artifacts
+renameLabelAtSiteEverywhere site new (Artifacts g ls ps) =
+  Artifacts
+    (renameLabelAtSiteInG sndr rcvr old new fresh g)
+    [(r, relabelLocal (show r) s) | (r, s) <- ls]
+    [(n, relabelProc n p) | (n, p) <- ps]
+  where
+    LabelSite sndr rcvr old = site
+    fresh = freshLabelId g
+    relabelLocal name s
+      | name == sndr = relabelSendsToS rcvr old new fresh s
+      | name == rcvr = relabelRecvsFromS sndr old new fresh s
+      | otherwise = s
+    relabelProc name p
+      | name == sndr = relabelSendsToP rcvr old new p
+      | name == rcvr = relabelRecvsFromP sndr old new p
+      | otherwise = p
+
+-- Precondition for the site rename. Allowed when:
+--   old and new are different, and neither is the reserved crash,
+--   the message (sender -> receiver : old) actually exists,
+--   new does not already label a sibling branch of that same choice.
+preRenameLabelAtSite :: LabelSite -> String -> G () -> ErrOr ()
+preRenameLabelAtSite (LabelSite sndr rcvr old) new g
+  | old == new =
+      Err "rename label at site: the old and new names are the same"
+  | old == "crash" || new == "crash" =
+      Err "rename label at site: the crash label is reserved"
+  | not (exists g) =
+      Err
+        ( "rename label at site: no message '"
+            ++ old
+            ++ "' from "
+            ++ sndr
+            ++ " to "
+            ++ rcvr
+        )
+  | clash g =
+      Err
+        ( "rename label at site: '"
+            ++ new
+            ++ "' already labels a sibling branch of that choice"
+        )
+  | otherwise = Ok ()
+  where
+    matches p q = show p == sndr && show q == rcvr
+    exists (GComm p q _ cs)
+      | matches p q =
+          old `elem` map (show . label) cs || any (exists . cont) cs
+      | otherwise = any (exists . cont) cs
+    exists (GRec _ g') = exists g'
+    exists (GVar _ _) = False
+    exists GEnd = False
+    clash (GComm p q _ cs)
+      | matches p q =
+          let names = map (show . label) cs
+           in (old `elem` names && new `elem` names) || any (clash . cont) cs
+      | otherwise = any (clash . cont) cs
+    clash (GRec _ g') = clash g'
+    clash (GVar _ _) = False
+    clash GEnd = False
+
+refactorRenameLabelAtSite :: LabelSite -> String -> Artifacts -> ErrOr Artifacts
+refactorRenameLabelAtSite site new arts = do
+  preRenameLabelAtSite site new (aGlobal arts)
+  let arts' = renameLabelAtSiteEverywhere site new arts
   _ <- checkProcsFromLocals (aLocals arts') (aProcs arts')
   pure arts'
